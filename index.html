@@ -1,0 +1,492 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width,initial-scale=1" />
+    <title>Yinan — Star Map</title>
+    <style>
+      html,
+      body {
+        height: 100%;
+        margin: 0;
+      }
+      body {
+        background: #000;
+        color: #fff;
+        font: 14px/1.6 ui-sans-serif, -apple-system, BlinkMacSystemFont,
+          "Helvetica Neue", Arial;
+        overflow: hidden; /* 纯粹的夜空 */
+      }
+
+      /* 层次：背景星空(canvas) + FX(canvas：连线/流星) + 可交互星星(div) */
+      #sky,
+      #fx {
+        position: fixed;
+        inset: 0;
+        display: block;
+      }
+      #sky {
+        z-index: 0;
+        background: #000;
+      }
+      #fx {
+        z-index: 1;
+        pointer-events: none;
+      } /* 让鼠标事件落到星星上 */
+
+      .stars {
+        position: fixed;
+        inset: 0;
+        z-index: 2;
+      }
+
+      .star {
+        position: absolute;
+        width: var(--s, 6px);
+        height: var(--s, 6px);
+        border-radius: 50%;
+        background: #fff;
+        transform: translate(-50%, -50%);
+        cursor: pointer;
+        animation: twinkle 2.8s infinite ease-in-out;
+        transition: transform 0.15s ease;
+      }
+      .star:hover {
+        transform: translate(-50%, -50%) scale(1.25);
+      }
+      .star:focus-visible {
+        outline: 1px dashed rgba(255, 255, 255, 0.6);
+        outline-offset: 4px;
+      }
+
+      .star::after {
+        content: attr(data-title);
+        position: absolute;
+        left: 10px;
+        top: -2px;
+        color: #fff;
+        background: rgba(0, 0, 0, 0.6);
+        padding: 2px 6px;
+        border-radius: 4px;
+        font-size: 12px;
+        letter-spacing: 0.02em;
+        opacity: 0;
+        transform: translateY(2px);
+        transition: opacity 0.15s ease, transform 0.15s ease;
+        white-space: nowrap;
+        pointer-events: none;
+      }
+      .star:hover::after {
+        opacity: 1;
+        transform: translateY(0);
+      }
+
+      @keyframes twinkle {
+        0%,
+        100% {
+          opacity: 0.85;
+        }
+        45% {
+          opacity: 0.45;
+        }
+        60% {
+          opacity: 1;
+        }
+      }
+
+      .note {
+        position: fixed;
+        right: 16px;
+        bottom: 14px;
+        z-index: 3;
+        color: #aaa;
+        font-size: 12px;
+        letter-spacing: 0.03em;
+        background: rgba(0, 0, 0, 0.35);
+        padding: 6px 8px;
+        border-radius: 6px;
+      }
+      .note a {
+        color: #fff;
+        text-decoration: none;
+        border-bottom: 1px solid #fff;
+      }
+      .note a:hover {
+        opacity: 0.8;
+      }
+
+      .panel {
+        position: fixed;
+        right: 16px;
+        bottom: 44px;
+        z-index: 3;
+        max-height: 40vh;
+        width: 240px;
+        overflow: auto;
+        background: rgba(0, 0, 0, 0.8);
+        border: 1px solid rgba(255, 255, 255, 0.15);
+        backdrop-filter: blur(3px);
+        padding: 8px 10px;
+        border-radius: 8px;
+        display: none;
+      }
+      .panel.open {
+        display: block;
+      }
+      .panel h2 {
+        margin: 4px 0 6px;
+        font-size: 12px;
+        color: #bbb;
+        font-weight: 600;
+        letter-spacing: 0.08em;
+        text-transform: uppercase;
+      }
+      .panel a {
+        display: block;
+        color: #fff;
+        padding: 6px 4px;
+        border-radius: 4px;
+        text-decoration: none;
+      }
+      .panel a:hover {
+        background: rgba(255, 255, 255, 0.08);
+      }
+
+      /* 面板（点击星星后出现） */
+      .page {
+        position: fixed;
+        inset: 0;
+        z-index: 4;
+        display: none;
+        align-items: center;
+        justify-content: center;
+        background: rgba(0, 0, 0, 0.88);
+      }
+      .page:target {
+        display: flex;
+      }
+      .sheet {
+        max-width: 760px;
+        width: min(92vw, 760px);
+        max-height: 80vh;
+        overflow: auto;
+        background: #000;
+        border: 1px solid rgba(255, 255, 255, 0.35);
+        padding: 20px 18px;
+        border-radius: 10px;
+        box-shadow: 0 0 20px rgba(255, 255, 255, 0.25);
+      }
+      .sheet h1 {
+        margin: 0 0 10px;
+        font-size: 16px;
+        letter-spacing: 0.02em;
+      }
+      .sheet p {
+        margin: 0 0 10px;
+        color: #ddd;
+      }
+      .close {
+        position: absolute;
+        top: 18px;
+        right: 18px;
+        z-index: 5;
+        width: 36px;
+        height: 36px;
+        border: 1px solid rgba(255, 255, 255, 0.5);
+        border-radius: 50%;
+        display: grid;
+        place-items: center;
+        color: #fff;
+        text-decoration: none;
+      }
+      .close:hover {
+        background: rgba(255, 255, 255, 0.15);
+      }
+    </style>
+  </head>
+  <body>
+    <canvas id="sky" aria-hidden="true"></canvas>
+    <canvas id="fx" aria-hidden="true"></canvas>
+
+    <div class="stars" id="stars"></div>
+
+    <div class="panel" id="panel" aria-live="polite" aria-label="All links">
+      <h2>entries</h2>
+      <nav id="list"></nav>
+    </div>
+
+    <div class="note">
+      <span>tap a star ✧</span>
+      &nbsp;·&nbsp;<a href="#" id="toggle">list</a>
+    </div>
+
+    <!-- ====== 内容面板（About 填写，其它可空） ====== -->
+    <section id="about" class="page">
+      <a class="close" href="#" aria-label="Close">×</a>
+      <article class="sheet">
+        <h1>About me</h1>
+        <p>Hello, I’m Yinan.</p>
+        <p>
+          I like turning thoughts and emotions into quirky art projects, and I
+          love reading about mindfulness and therapeutic ideas.
+        </p>
+        <p>
+          I take photos, make jewelry, draw cartoons, and enjoy designing my own
+          apps.
+        </p>
+        <p>I’m still learning and exploring—slowly, but happily.</p>
+        <p>
+          Thanks for visiting my little corner in this digital starry night.
+        </p>
+      </article>
+    </section>
+
+    <section id="projects" class="page">
+      <a class="close" href="#" aria-label="Close">×</a>
+      <article class="sheet"></article>
+    </section>
+    <section id="photography" class="page">
+      <a class="close" href="#" aria-label="Close">×</a>
+      <article class="sheet"></article>
+    </section>
+    <section id="cartoons" class="page">
+      <a class="close" href="#" aria-label="Close">×</a>
+      <article class="sheet"></article>
+    </section>
+    <section id="craft" class="page">
+      <a class="close" href="#" aria-label="Close">×</a>
+      <article class="sheet"></article>
+    </section>
+    <section id="reading" class="page">
+      <a class="close" href="#" aria-label="Close">×</a>
+      <article class="sheet"></article>
+    </section>
+
+    <script>
+      /* ---------- 配置：每颗“导航星” = 一个入口 ---------- */
+      const LINKS = [
+        { title: "About", url: "#about", size: 7, pos: [0.18, 0.32] },
+        { title: "Projects", url: "#projects", size: 6, pos: [0.35, 0.18] },
+        {
+          title: "Photography",
+          url: "#photography",
+          size: 8,
+          pos: [0.62, 0.28],
+        },
+        { title: "Cartoons", url: "#cartoons", size: 6, pos: [0.72, 0.52] },
+        { title: "Craft / Jewelry", url: "#craft", size: 7, pos: [0.48, 0.62] },
+        { title: "Reading Notes", url: "#reading", size: 5, pos: [0.28, 0.58] },
+      ];
+
+      /* ---------- 画布 ---------- */
+      const sky = document.getElementById("sky");
+      const sctx = sky.getContext("2d");
+      const fx = document.getElementById("fx");
+      const fctx = fx.getContext("2d");
+
+      let W,
+        H,
+        BACKSTARS = [],
+        METEORS = [],
+        navStars = [];
+
+      function rand(a, b) {
+        return Math.random() * (b - a) + a;
+      }
+
+      function resize() {
+        W = sky.width = fx.width = window.innerWidth;
+        H = sky.height = fx.height = window.innerHeight;
+
+        const count = Math.min(500, Math.floor((W * H) / 5000));
+        BACKSTARS = Array.from({ length: count }, () => ({
+          x: rand(0, W),
+          y: rand(0, H),
+          r: rand(0.3, 1.2),
+          a: rand(0.3, 0.9),
+          dx: rand(-0.02, 0.02),
+          dy: rand(-0.015, 0.015),
+          tw: rand(0, Math.PI * 2),
+        }));
+      }
+
+      function drawSky() {
+        sctx.clearRect(0, 0, W, H);
+        sctx.fillStyle = "#fff";
+        for (const s of BACKSTARS) {
+          s.x += s.dx;
+          s.y += s.dy;
+          if (s.x < 0) s.x = W;
+          if (s.x > W) s.x = 0;
+          if (s.y < 0) s.y = H;
+          if (s.y > H) s.y = 0;
+          s.tw += 0.015;
+          const alpha = s.a + Math.sin(s.tw) * 0.12;
+          sctx.globalAlpha = Math.max(0.2, Math.min(1, alpha));
+          sctx.beginPath();
+          sctx.arc(s.x, s.y, s.r, 0, Math.PI * 2);
+          sctx.fill();
+        }
+        sctx.globalAlpha = 1;
+        requestAnimationFrame(drawSky);
+      }
+
+      /* ---------- 流星（稀疏） ---------- */
+      function spawnMeteor() {
+        if (Math.random() < 0.02) {
+          const x = rand(0, W),
+            y = -20;
+          const speed = rand(5, 8);
+          METEORS.push({
+            x,
+            y,
+            vx: speed * 0.7,
+            vy: speed,
+            life: 50,
+            len: rand(80, 140),
+          });
+        }
+      }
+      function drawFX() {
+        fctx.clearRect(0, 0, W, H);
+
+        spawnMeteor();
+        for (let i = METEORS.length - 1; i >= 0; i--) {
+          const m = METEORS[i];
+          const tx = m.x,
+            ty = m.y;
+          const bx = m.x - m.vx * (m.len / 10);
+          const by = m.y - m.vy * (m.len / 10);
+          fctx.strokeStyle = `rgba(255,255,255,${m.life / 60})`;
+          fctx.lineWidth = 1;
+          fctx.beginPath();
+          fctx.moveTo(bx, by);
+          fctx.lineTo(tx, ty);
+          fctx.stroke();
+          m.x += m.vx;
+          m.y += m.vy;
+          m.life--;
+          if (m.life <= 0) METEORS.splice(i, 1);
+        }
+
+        drawConstellation(); // 恢复“鼠标附近小星座连线”
+        requestAnimationFrame(drawFX);
+      }
+
+      /* ---------- 生成导航星星 & 列表（大小略有抖动） ---------- */
+      const container = document.getElementById("stars");
+      const list = document.getElementById("list");
+
+      function placeStars() {
+        container.innerHTML = "";
+        list.innerHTML = "";
+        navStars = [];
+        LINKS.forEach((item) => {
+          const a = document.createElement("a");
+          a.className = "star";
+          a.href = item.url;
+          a.dataset.title = item.title;
+
+          const x = (item.pos?.[0] ?? Math.random()) * window.innerWidth;
+          const y = (item.pos?.[1] ?? Math.random()) * window.innerHeight;
+
+          const base = item.size || 6;
+          const jitter = base * (0.9 + Math.random() * 0.4);
+          a.style.setProperty("--s", jitter + "px");
+
+          a.style.left = x + "px";
+          a.style.top = y + "px";
+
+          container.appendChild(a);
+          navStars.push({ x, y, el: a });
+
+          const li = document.createElement("a");
+          li.href = item.url;
+          li.textContent = "✦ " + item.title;
+          list.appendChild(li);
+        });
+      }
+
+      /* ---------- 鼠标附近的“小星座连线” ---------- */
+      let mouse = { x: -9999, y: -9999 };
+      container.addEventListener("mousemove", (e) => {
+        mouse.x = e.clientX;
+        mouse.y = e.clientY;
+      });
+      container.addEventListener("mouseleave", () => {
+        mouse.x = -9999;
+        mouse.y = -9999;
+      });
+
+      function drawConstellation() {
+        if (mouse.x < 0) return;
+
+        const MAX = 5; // 最多取 5 颗
+        const R2 = 220 * 220; // 感应半径平方
+        const near = [];
+        for (const s of navStars) {
+          const dx = s.x - mouse.x,
+            dy = s.y - mouse.y;
+          const d2 = dx * dx + dy * dy;
+          if (d2 < R2) near.push({ s, d2 });
+        }
+        near.sort((a, b) => a.d2 - b.d2);
+        const pick = near.slice(0, MAX).map((n) => n.s);
+        if (pick.length < 2) return;
+
+        fctx.save();
+        fctx.strokeStyle = "rgba(255,255,255,.35)";
+        fctx.lineWidth = 0.8;
+
+        fctx.beginPath();
+        fctx.moveTo(mouse.x, mouse.y);
+        fctx.lineTo(pick[0].x, pick[0].y);
+        fctx.stroke();
+
+        fctx.beginPath();
+        fctx.moveTo(pick[0].x, pick[0].y);
+        for (let i = 1; i < pick.length; i++) {
+          fctx.lineTo(pick[i].x, pick[i].y);
+        }
+        fctx.stroke();
+
+        fctx.fillStyle = "rgba(255,255,255,.6)";
+        for (const s of pick) {
+          fctx.beginPath();
+          fctx.arc(s.x, s.y, 1.2, 0, Math.PI * 2);
+          fctx.fill();
+        }
+        fctx.restore();
+      }
+
+      /* ---------- 列表模式开关 ---------- */
+      const panel = document.getElementById("panel");
+      const toggle = document.getElementById("toggle");
+      toggle.addEventListener("click", (e) => {
+        e.preventDefault();
+        panel.classList.toggle("open");
+      });
+
+      /* ---------- 初始化 ---------- */
+      resize();
+      placeStars();
+      drawSky();
+      drawFX();
+      window.addEventListener("resize", () => {
+        resize();
+        placeStars();
+      });
+
+      /* ---------- 面板内容占位：空则填“under exploration...” ---------- */
+      document.querySelectorAll(".page .sheet").forEach((sheet) => {
+        const hasContent = sheet.textContent.trim().length > 0;
+        if (!hasContent) {
+          const p = document.createElement("p");
+          p.textContent = "under exploration...";
+          p.style.color = "#bbb";
+          sheet.appendChild(p);
+        }
+      });
+    </script>
+  </body>
+</html>
